@@ -26,9 +26,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Convert OBJ to GLB
-        run: node scripts/convert.mjs
-
       - name: Build
         run: npm run build -- --base=/filtro-elipses-3d/
 
