@@ -333,32 +333,46 @@ export class Viewer {
       this.scene.background           = this._kitchenHDR.bg
       this.scene.environment          = this._kitchenHDR.env
       this.scene.environmentIntensity = 0.85
+      // Tilt camera down so the model base aligns with the panorama counter
+      this.controls.target.set(0, -0.14, 0)
+      this.controls.update()
     } else {
       this.scene.background           = new THREE.Color(env.bg)
       this.scene.environment          = this._roomEnvTexture
       this.scene.environmentIntensity = 1.4
+      // Reset camera target to center
+      this.controls.target.set(0, 0, 0)
+      this.controls.update()
     }
     if (this._kitchenGroup) this._kitchenGroup.visible = !!env.kitchen
     return env.label
   }
 
-  // ── Load kitchen HDR (async, called once at init) ────────────────────────
+  // ── Load kitchen environment (async, called once at init) ────────────────
   async _loadKitchenHDR(renderer, pmrem) {
     try {
-      const loader = new RGBELoader()
-      const hdr = await loader.loadAsync(import.meta.env.BASE_URL + 'assets/kitchen.hdr')
+      // JPEG panorama as visible background (user's kitchen photo)
+      const bgTex = await new THREE.TextureLoader()
+        .loadAsync(import.meta.env.BASE_URL + 'assets/kitchen_bg.jpg')
+      bgTex.mapping    = THREE.EquirectangularReflectionMapping
+      bgTex.colorSpace = THREE.SRGBColorSpace
+
+      // HDR (Poly Haven) for accurate PBR reflections on the model
+      const hdr = await new RGBELoader()
+        .loadAsync(import.meta.env.BASE_URL + 'assets/kitchen.hdr')
       hdr.mapping = THREE.EquirectangularReflectionMapping
       const envTex = pmrem.fromEquirectangular(hdr).texture
       pmrem.dispose()
-      this._kitchenHDR = { bg: hdr, env: envTex }
-      // Apply immediately if already in Gourmet mode
+
+      this._kitchenHDR = { bg: bgTex, env: envTex }
+
       if (ENVS[this.envIdx].kitchen) {
-        this.scene.background           = hdr
+        this.scene.background           = bgTex
         this.scene.environment          = envTex
         this.scene.environmentIntensity = 0.85
       }
     } catch (e) {
-      console.warn('Kitchen HDR not loaded:', e)
+      console.warn('Kitchen environment not loaded:', e)
       pmrem.dispose()
     }
   }
