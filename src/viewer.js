@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js'
 
 // ── Material definitions ──────────────────────────────────────────────────
 export const BODY_MATS = {
@@ -70,6 +71,8 @@ export class Viewer {
 
     // Kitchen environment group (shown only in Gourmet env)
     this._kitchenGroup = null
+    this._roomEnvTexture = null
+    this._kitchenHDR     = null
 
     this._init()
   }
@@ -103,7 +106,9 @@ export class Viewer {
     const envTexture = pmrem.fromScene(new RoomEnvironment(renderer)).texture
     scene.environment = envTexture
     scene.environmentIntensity = 1.4
-    pmrem.dispose()
+    this._roomEnvTexture = envTexture
+    // Kitchen HDR loads async — pmrem disposed inside after use
+    this._loadKitchenHDR(renderer, pmrem)
 
     // Camera — positioned after model loads
     const camera = new THREE.PerspectiveCamera(35, 1, 0.001, 50)
@@ -237,11 +242,6 @@ export class Viewer {
             const scaledH = size.y * scale
             const counter = this._kitchenGroup.getObjectByName('counter')
             if (counter) counter.position.y = groundY - 0.025
-            const wall = this._kitchenGroup.getObjectByName('wall')
-            if (wall) {
-              wall.position.y = groundY + scaledH * 0.55
-              wall.position.z = -0.72
-            }
             const edge = this._kitchenGroup.getObjectByName('edge')
             if (edge) {
               edge.position.y = groundY - 0.002
@@ -326,11 +326,41 @@ export class Viewer {
   cycleEnvironment() {
     this.envIdx = (this.envIdx + 1) % ENVS.length
     const env = ENVS[this.envIdx]
-    this.scene.background = new THREE.Color(env.bg)
     const amb = this.scene.getObjectByName('ambient')
     if (amb) amb.intensity = env.ambInt
+
+    if (env.kitchen && this._kitchenHDR) {
+      this.scene.background           = this._kitchenHDR.bg
+      this.scene.environment          = this._kitchenHDR.env
+      this.scene.environmentIntensity = 0.85
+    } else {
+      this.scene.background           = new THREE.Color(env.bg)
+      this.scene.environment          = this._roomEnvTexture
+      this.scene.environmentIntensity = 1.4
+    }
     if (this._kitchenGroup) this._kitchenGroup.visible = !!env.kitchen
     return env.label
+  }
+
+  // ── Load kitchen HDR (async, called once at init) ────────────────────────
+  async _loadKitchenHDR(renderer, pmrem) {
+    try {
+      const loader = new RGBELoader()
+      const hdr = await loader.loadAsync(import.meta.env.BASE_URL + 'assets/kitchen.hdr')
+      hdr.mapping = THREE.EquirectangularReflectionMapping
+      const envTex = pmrem.fromEquirectangular(hdr).texture
+      pmrem.dispose()
+      this._kitchenHDR = { bg: hdr, env: envTex }
+      // Apply immediately if already in Gourmet mode
+      if (ENVS[this.envIdx].kitchen) {
+        this.scene.background           = hdr
+        this.scene.environment          = envTex
+        this.scene.environmentIntensity = 0.85
+      }
+    } catch (e) {
+      console.warn('Kitchen HDR not loaded:', e)
+      pmrem.dispose()
+    }
   }
 
   // ── Kitchen environment geometry ─────────────────────────────────────────
@@ -338,7 +368,7 @@ export class Viewer {
     const group = new THREE.Group()
     group.visible = false
 
-    // Dark granite/quartz countertop
+    // Dark granite/quartz countertop (HDR provides the background wall)
     const topMat = new THREE.MeshStandardMaterial({
       color: 0x1E1C1A, roughness: 0.14, metalness: 0.05,
     })
@@ -346,15 +376,6 @@ export class Viewer {
     counter.receiveShadow = true
     counter.name = 'counter'
     group.add(counter)
-
-    // Warm off-white plaster wall
-    const wallMat = new THREE.MeshStandardMaterial({
-      color: 0xEDEAE2, roughness: 0.94, metalness: 0.0,
-    })
-    const wall = new THREE.Mesh(new THREE.PlaneGeometry(5, 3.5), wallMat)
-    wall.receiveShadow = true
-    wall.name = 'wall'
-    group.add(wall)
 
     // Subtle counter edge highlight (thin strip at front)
     const edgeMat = new THREE.MeshStandardMaterial({
