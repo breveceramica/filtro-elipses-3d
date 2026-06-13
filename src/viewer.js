@@ -21,7 +21,7 @@ export const BASE_MATS = {
 //   mesh63–115:  Tampa         → lid
 //   mesh116–154: Pé            → base
 //   mesh155–169: Torneira      → tap
-//   mesh170–192: Vela          → body_lower (interior, hidden)
+//   mesh170–192: Vela          → vela (ceramic white candle)
 function meshRole(name) {
   const m = name.match(/^mesh(\d+)$/)
   if (!m) return 'body_lower'
@@ -31,7 +31,7 @@ function meshRole(name) {
   if (n <= 115) return 'lid'
   if (n <= 154) return 'base'
   if (n <= 169) return 'tap'
-  return 'body_lower'
+  return 'vela'
 }
 
 // ── Environment configs ───────────────────────────────────────────────────
@@ -170,6 +170,14 @@ export class Viewer {
     })
     // tapMat shares the same instance as baseMat — they change together
     this.tapMat = this.baseMat
+    // Vela: off-white fired ceramic (Stefani candle)
+    this.velaMat = new THREE.MeshPhysicalMaterial({
+      color:             0xEFEBE3,
+      roughness:         0.78,
+      metalness:         0.00,
+      specularIntensity: 0.10,
+      specularColor:     new THREE.Color(0xffffff),
+    })
 
     // Resize
     this._onResize()
@@ -226,6 +234,7 @@ export class Viewer {
             const role = meshRole(node.name)
             if      (role === 'base') node.material = this.baseMat
             else if (role === 'tap')  node.material = this.tapMat
+            else if (role === 'vela') node.material = this.velaMat
             else                      node.material = this.bodyMat
 
             // Store for explode
@@ -301,7 +310,7 @@ export class Viewer {
 
   setWireframe(on) {
     this.wireframe = on
-    ;[this.bodyMat, this.baseMat, this.tapMat].forEach(mat => {
+    ;[this.bodyMat, this.baseMat, this.tapMat, this.velaMat].forEach(mat => {
       mat.wireframe = on
       mat.needsUpdate = true
     })

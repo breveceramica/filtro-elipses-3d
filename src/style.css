@@ -127,22 +127,30 @@ main {
 .section {}
 
 .sec-label {
-  font-size: 0.58rem;
+  font-family: var(--font-serif);
+  font-size: 0.62rem;
   font-weight: 500;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--sub);
+  color: var(--text);
   margin-bottom: 9px;
 }
 
 /* Specs */
-.spec-list { display: flex; flex-direction: column; }
+.spec-list {
+  display: flex;
+  flex-direction: column;
+  background: rgba(155, 74, 40, 0.09);
+  border: 1px solid rgba(155, 74, 40, 0.22);
+  border-radius: var(--radius);
+  padding: 2px 10px;
+}
 .spec-row {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   padding: 5px 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid rgba(155, 74, 40, 0.12);
   font-size: 0.70rem;
 }
 .spec-row:last-child { border-bottom: none; }
