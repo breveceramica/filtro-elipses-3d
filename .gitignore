@@ -1,0 +1,4 @@
+node_modules/
+dist/
+*.obj
+.DS_Store
