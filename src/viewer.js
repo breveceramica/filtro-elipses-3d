@@ -36,9 +36,9 @@ function meshRole(name) {
 
 // ── Environment configs ───────────────────────────────────────────────────
 const ENVS = [
-  { bg: 0xF0EBE4, ambInt: 0.55, label: 'Estúdio' },
-  { bg: 0xE8EEF5, ambInt: 0.65, label: 'Frio'    },
-  { bg: 0x141218, ambInt: 0.22, label: 'Noite'   },
+  { bg: 0xF0EBE4, ambInt: 0.55, label: 'Estúdio', kitchen: false },
+  { bg: 0xE8EEF5, ambInt: 0.65, label: 'Frio',    kitchen: false },
+  { bg: 0xF2EEE8, ambInt: 0.72, label: 'Gourmet', kitchen: true  },
 ]
 
 export class Viewer {
@@ -67,6 +67,9 @@ export class Viewer {
 
     // Original positions for explode
     this.origPositions = {}
+
+    // Kitchen environment group (shown only in Gourmet env)
+    this._kitchenGroup = null
 
     this._init()
   }
@@ -155,6 +158,10 @@ export class Viewer {
     ground.receiveShadow = true
     scene.add(ground)
 
+    // Kitchen environment (countertop + wall, hidden until Gourmet env)
+    this._kitchenGroup = this._buildKitchen()
+    scene.add(this._kitchenGroup)
+
     // Materials (shared instances — MeshPhysicalMaterial for better PBR)
     this.bodyMat = new THREE.MeshPhysicalMaterial({
       color:            BODY_MATS.clay.color,
@@ -224,6 +231,23 @@ export class Viewer {
             c => c.isMesh && c.material instanceof THREE.ShadowMaterial
           )
           if (groundMesh) groundMesh.position.y = groundY - 0.002
+
+          // ── Position kitchen to model bottom ──
+          if (this._kitchenGroup) {
+            const scaledH = size.y * scale
+            const counter = this._kitchenGroup.getObjectByName('counter')
+            if (counter) counter.position.y = groundY - 0.025
+            const wall = this._kitchenGroup.getObjectByName('wall')
+            if (wall) {
+              wall.position.y = groundY + scaledH * 0.55
+              wall.position.z = -0.72
+            }
+            const edge = this._kitchenGroup.getObjectByName('edge')
+            if (edge) {
+              edge.position.y = groundY - 0.002
+              edge.position.z = 1.0
+            }
+          }
 
           // ── Assign materials by mesh number range ──
           model.traverse((node) => {
@@ -305,7 +329,42 @@ export class Viewer {
     this.scene.background = new THREE.Color(env.bg)
     const amb = this.scene.getObjectByName('ambient')
     if (amb) amb.intensity = env.ambInt
+    if (this._kitchenGroup) this._kitchenGroup.visible = !!env.kitchen
     return env.label
+  }
+
+  // ── Kitchen environment geometry ─────────────────────────────────────────
+  _buildKitchen() {
+    const group = new THREE.Group()
+    group.visible = false
+
+    // Dark granite/quartz countertop
+    const topMat = new THREE.MeshStandardMaterial({
+      color: 0x1E1C1A, roughness: 0.14, metalness: 0.05,
+    })
+    const counter = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.05, 2.0), topMat)
+    counter.receiveShadow = true
+    counter.name = 'counter'
+    group.add(counter)
+
+    // Warm off-white plaster wall
+    const wallMat = new THREE.MeshStandardMaterial({
+      color: 0xEDEAE2, roughness: 0.94, metalness: 0.0,
+    })
+    const wall = new THREE.Mesh(new THREE.PlaneGeometry(5, 3.5), wallMat)
+    wall.receiveShadow = true
+    wall.name = 'wall'
+    group.add(wall)
+
+    // Subtle counter edge highlight (thin strip at front)
+    const edgeMat = new THREE.MeshStandardMaterial({
+      color: 0x2A2826, roughness: 0.08, metalness: 0.10,
+    })
+    const edge = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.005, 0.01), edgeMat)
+    edge.name = 'edge'
+    group.add(edge)
+
+    return group
   }
 
   setWireframe(on) {
