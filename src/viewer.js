@@ -7,13 +7,13 @@ import { RGBELoader } from 'three/addons/loaders/RGBELoader.js'
 
 // ── Material definitions ──────────────────────────────────────────────────
 export const BODY_MATS = {
-  clay:        { color: 0x9B4020, roughness: 0.95, metalness: 0.00 },
-  verde_folha: { color: 0x4A6B30, roughness: 0.94, metalness: 0.00 },
-  white:       { color: 0xD8D2CA, roughness: 0.94, metalness: 0.00 },
+  clay:        { color: 0x9B4020, roughness: 0.93, metalness: 0.00 },
+  verde_folha: { color: 0x4A6B30, roughness: 0.92, metalness: 0.00 },
+  white:       { color: 0xDDD8D0, roughness: 0.91, metalness: 0.00 },
 }
 export const BASE_MATS = {
-  steel: { color: 0xB4BCBF, roughness: 0.38, metalness: 0.88 },
-  latao: { color: 0xB89A38, roughness: 0.36, metalness: 0.86 },
+  steel: { color: 0xC8D0D4, roughness: 0.22, metalness: 0.95 },
+  latao: { color: 0xC8A840, roughness: 0.20, metalness: 0.92 },
 }
 
 // ── Environment configs ───────────────────────────────────────────────────
@@ -180,30 +180,36 @@ export class Viewer {
     this._kitchenGroup = this._buildKitchen()
     scene.add(this._kitchenGroup)
 
-    // Material instances — MeshPhysicalMaterial for ceramic sheen
+    // Ceramic: high roughness + clearcoat simulates fired clay microsheen
     this.bodyMat = new THREE.MeshPhysicalMaterial({
-      color:             BODY_MATS.clay.color,
-      roughness:         BODY_MATS.clay.roughness,
-      metalness:         BODY_MATS.clay.metalness,
-      specularIntensity: 0.06,
-      specularColor:     new THREE.Color(0xfff4ee),
+      color:              BODY_MATS.clay.color,
+      roughness:          BODY_MATS.clay.roughness,
+      metalness:          0.00,
+      specularIntensity:  0.08,
+      specularColor:      new THREE.Color(0xfff0e8),
+      clearcoat:          0.06,
+      clearcoatRoughness: 0.85,
     })
+    // Polished aluminum/brass base
     this.baseMat = new THREE.MeshPhysicalMaterial({
       color:     BASE_MATS.steel.color,
       roughness: BASE_MATS.steel.roughness,
       metalness: BASE_MATS.steel.metalness,
     })
+    // Stainless tap — slightly more polished
     this.tapMat = new THREE.MeshPhysicalMaterial({
       color:     BASE_MATS.steel.color,
-      roughness: 0.20,
-      metalness: 0.90,
+      roughness: Math.max(0.12, BASE_MATS.steel.roughness - 0.06),
+      metalness: BASE_MATS.steel.metalness,
     })
+    // Vela (Stefani candle): off-white fired ceramic
     this.velaMat = new THREE.MeshPhysicalMaterial({
-      color:             0xEFEBE3,
-      roughness:         0.78,
-      metalness:         0.00,
-      specularIntensity: 0.10,
-      specularColor:     new THREE.Color(0xffffff),
+      color:              0xEEEAE2,
+      roughness:          0.82,
+      metalness:          0.00,
+      specularIntensity:  0.12,
+      clearcoat:          0.04,
+      clearcoatRoughness: 0.90,
     })
 
     this._onResize()
@@ -228,8 +234,8 @@ export class Viewer {
           const model = gltf.scene
           this.model  = model
 
-          // Model is Z-up (Keyshot default) → rotate to Y-up
-          model.rotation.x = -Math.PI / 2
+          // Node "P_Aprovado" (parent of all product meshes) already has a matrix
+          // that converts Z-up → Y-up. DO NOT add extra rotation here.
 
           // Remove Ground Plane (Keyshot studio floor) before bbox calculation
           const toRemove = []
@@ -304,7 +310,7 @@ export class Viewer {
 
           this.scene.add(model)
 
-          // Camera — frame the model
+          // Camera — frame the full model with padding
           const scaledH  = size.y * scale
           const scaledW  = Math.max(size.x, size.z) * scale
           const halfFovV = THREE.MathUtils.degToRad(35) / 2
@@ -312,9 +318,8 @@ export class Viewer {
           const halfFovH = Math.atan(Math.tan(halfFovV) * aspect)
           const distH    = (scaledH / 2) / Math.tan(halfFovV)
           const distW    = (scaledW / 2) / Math.tan(halfFovH)
-          const dist     = Math.max(distH, distW) * 1.25
-          // Slightly below center looking up — showcases the filter's elegant profile
-          this.camera.position.set(0, -scaledH * 0.08, dist)
+          const dist     = Math.max(distH, distW) * 1.5
+          this.camera.position.set(0, 0, dist)
           this.controls.target.set(0, 0, 0)
           this.controls.update()
 
@@ -462,14 +467,14 @@ export class Viewer {
 
     if (!this.model) return
 
-    // Model has rotation.x = -PI/2; node positions are in model-local (Z-up) space.
-    // Local Z → world Y (up); local -Y → world +Z (toward camera)
+    // Node positions are in P_Aprovado local space (Z-up before node matrix):
+    //   local +Z → world +Y (up), local -Y → world +Z (toward camera)
     const ROLE_OFFSETS = {
       lid:        new THREE.Vector3(0,  0,    +0.26),
       body_upper: new THREE.Vector3(0,  0,    +0.12),
       body_lower: new THREE.Vector3(0,  0,     0   ),
       base:       new THREE.Vector3(0,  0,    -0.16),
-      tap:        new THREE.Vector3(0, -0.24,  0   ),
+      tap:        new THREE.Vector3(0, -0.20,  0   ),
     }
 
     Object.entries(this.meshGroups).forEach(([role, nodes]) => {
