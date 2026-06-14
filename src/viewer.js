@@ -181,6 +181,7 @@ export class Viewer {
     scene.add(this._kitchenGroup)
 
     // Ceramic: high roughness + clearcoat simulates fired clay microsheen
+    // DoubleSide avoids backface culling on open rims and concave sections
     this.bodyMat = new THREE.MeshPhysicalMaterial({
       color:              BODY_MATS.clay.color,
       roughness:          BODY_MATS.clay.roughness,
@@ -189,18 +190,21 @@ export class Viewer {
       specularColor:      new THREE.Color(0xfff0e8),
       clearcoat:          0.06,
       clearcoatRoughness: 0.85,
+      side:               THREE.DoubleSide,
     })
-    // Polished aluminum/brass base
+    // Polished aluminum/brass base — DoubleSide matches original GLB doubleSided:true
     this.baseMat = new THREE.MeshPhysicalMaterial({
       color:     BASE_MATS.steel.color,
       roughness: BASE_MATS.steel.roughness,
       metalness: BASE_MATS.steel.metalness,
+      side:      THREE.DoubleSide,
     })
     // Stainless tap — slightly more polished
     this.tapMat = new THREE.MeshPhysicalMaterial({
       color:     BASE_MATS.steel.color,
       roughness: Math.max(0.12, BASE_MATS.steel.roughness - 0.06),
       metalness: BASE_MATS.steel.metalness,
+      side:      THREE.DoubleSide,
     })
     // Vela (Stefani candle): off-white fired ceramic
     this.velaMat = new THREE.MeshPhysicalMaterial({
@@ -210,6 +214,7 @@ export class Viewer {
       specularIntensity:  0.12,
       clearcoat:          0.04,
       clearcoatRoughness: 0.90,
+      side:               THREE.DoubleSide,
     })
 
     this._onResize()
@@ -234,24 +239,39 @@ export class Viewer {
           const model = gltf.scene
           this.model  = model
 
-          // Node "P_Aprovado" (parent of all product meshes) already has a matrix
-          // that converts Z-up → Y-up. DO NOT add extra rotation here.
+          // Node "P_Aprovado" already has a matrix that converts Z-up → Y-up.
+          // DO NOT add extra rotation on model root.
 
-          // Remove Ground Plane (Keyshot studio floor) before bbox calculation
-          const toRemove = []
+          // Find P_Aprovado node and collect all product meshes under it.
+          // Keyshot may create intermediate group nodes, so check all ancestors.
+          const pAprovado = model.getObjectByName('P_Aprovado')
+
+          const productMeshes = []
+          if (pAprovado) {
+            pAprovado.traverse(node => {
+              if (!node.isMesh) return
+              node.castShadow    = true
+              node.receiveShadow = true
+              productMeshes.push(node)
+            })
+          } else {
+            // Fallback: all meshes in scene (shouldn't happen)
+            model.traverse(node => {
+              if (!node.isMesh) return
+              node.castShadow    = true
+              node.receiveShadow = true
+              productMeshes.push(node)
+            })
+          }
+
+          // Remove any mesh NOT under P_Aprovado (Ground Plane, studio props)
+          const productSet = new Set(productMeshes)
+          const toRemove   = []
           model.traverse(node => {
-            if (node.isMesh && node.parent?.name !== 'P_Aprovado') toRemove.push(node)
+            if (node.isMesh && !productSet.has(node)) toRemove.push(node)
           })
           toRemove.forEach(n => n.parent?.remove(n))
 
-          // Collect product meshes
-          const productMeshes = []
-          model.traverse(node => {
-            if (!node.isMesh) return
-            node.castShadow    = true
-            node.receiveShadow = true
-            productMeshes.push(node)
-          })
 
           // Compute bbox from product meshes only
           const bbox = new THREE.Box3()
