@@ -1,38 +1,19 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js'
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js'
 
 // ── Material definitions ──────────────────────────────────────────────────
 export const BODY_MATS = {
-  clay:        { color: 0x9B4020, roughness: 0.97, metalness: 0.00 },
-  verde_folha: { color: 0x4A6B30, roughness: 0.96, metalness: 0.00 },
-  white:       { color: 0xD8D2CA, roughness: 0.96, metalness: 0.00 },
+  clay:        { color: 0x9B4020, roughness: 0.95, metalness: 0.00 },
+  verde_folha: { color: 0x4A6B30, roughness: 0.94, metalness: 0.00 },
+  white:       { color: 0xD8D2CA, roughness: 0.94, metalness: 0.00 },
 }
 export const BASE_MATS = {
   steel: { color: 0xB4BCBF, roughness: 0.38, metalness: 0.88 },
   latao: { color: 0xB89A38, roughness: 0.36, metalness: 0.86 },
-}
-
-// ── Mesh number → material role ───────────────────────────────────────────
-// obj2gltf flattens all OBJ groups; nodes are named mesh0..mesh192.
-//   mesh0–31:    Módulo baixo  → body_lower
-//   mesh32–62:   Módulo topo   → body_upper
-//   mesh63–115:  Tampa         → lid
-//   mesh116–154: Pé            → base
-//   mesh155–169: Torneira      → tap
-//   mesh170–192: Vela          → vela (ceramic white candle)
-function meshRole(name) {
-  const m = name.match(/^mesh(\d+)$/)
-  if (!m) return 'body_lower'
-  const n = parseInt(m[1], 10)
-  if (n <= 31)  return 'body_lower'
-  if (n <= 62)  return 'body_upper'
-  if (n <= 115) return 'lid'
-  if (n <= 154) return 'base'
-  if (n <= 169) return 'tap'
-  return 'vela'
 }
 
 // ── Environment configs ───────────────────────────────────────────────────
@@ -41,6 +22,55 @@ const ENVS = [
   { bg: 0xE8EEF5, ambInt: 0.65, label: 'Frio',    kitchen: false },
   { bg: 0xF2EEE8, ambInt: 0.72, label: 'Gourmet', kitchen: true  },
 ]
+
+// ── Role detection for Keyshot GLB ───────────────────────────────────────
+// Material index from Keyshot: mat 1 & 4 are bright polished metal (roughness=0.12)
+// Mat 0, 2, 3 are ceramic body parts (roughness=1.0 from texture)
+// Mat 5 is the Ground Plane (skip it)
+// We detect metal vs ceramic by checking the parsed roughness factor.
+function detectRoles(productMeshes) {
+  const data = productMeshes.map(node => {
+    const b = new THREE.Box3().setFromObject(node)
+    const c = new THREE.Vector3()
+    b.getCenter(c)
+    // Keyshot metal mats have explicit roughnessFactor=0.12; ceramic defaults to 1.0
+    const isMetal = node.material && node.material.roughness < 0.15
+    return { node, cx: c.x, cy: c.y, cz: c.z, isMetal }
+  })
+
+  // Tap (torneira) sticks out asymmetrically on X axis
+  const maxAbsCx = Math.max(...data.map(d => Math.abs(d.cx)))
+  data.forEach(d => {
+    d.isTap = !d.isMetal && maxAbsCx > 0.05 && Math.abs(d.cx) > maxAbsCx * 0.55
+  })
+
+  // Ceramic parts sorted top to bottom
+  const ceramics = data
+    .filter(d => !d.isMetal && !d.isTap)
+    .sort((a, b) => b.cy - a.cy)
+
+  // Metal parts sorted top to bottom (base is bottom-most)
+  const metals = data
+    .filter(d => d.isMetal)
+    .sort((a, b) => b.cy - a.cy)
+
+  const roles = new Map()
+
+  // If we have more than 3 ceramic parts, lowest is probably vela (inside)
+  ceramics.forEach((d, i) => {
+    if (i === 0) roles.set(d.node, 'lid')
+    else if (i === 1) roles.set(d.node, 'body_upper')
+    else if (i === ceramics.length - 1 && ceramics.length >= 3) roles.set(d.node, 'body_lower')
+    else roles.set(d.node, 'body_upper')
+  })
+
+  data.filter(d => d.isTap).forEach(d => roles.set(d.node, 'tap'))
+
+  // Bottom metal = base, upper metal = also base (same material)
+  metals.forEach(d => roles.set(d.node, 'base'))
+
+  return roles
+}
 
 export class Viewer {
   constructor(canvas) {
@@ -51,26 +81,21 @@ export class Viewer {
     this.explodeT  = 0
     this.wireframe = false
 
-    // Three objects set after init
     this.renderer  = null
     this.scene     = null
     this.camera    = null
     this.controls  = null
     this.model     = null
 
-    // Material instances
     this.bodyMat   = null
     this.baseMat   = null
     this.tapMat    = null
+    this.velaMat   = null
 
-    // Mesh groups for explode
-    this.meshGroups = {}
-
-    // Original positions for explode
+    this.meshGroups    = {}
     this.origPositions = {}
 
-    // Kitchen environment group (shown only in Gourmet env)
-    this._kitchenGroup = null
+    this._kitchenGroup   = null
     this._roomEnvTexture = null
     this._kitchenHDR     = null
 
@@ -81,57 +106,46 @@ export class Viewer {
   _init() {
     const canvas = this.canvas
 
-    // Renderer
-    const renderer = new THREE.WebGLRenderer({
-      canvas,
-      antialias: true,
-      alpha: false,
-    })
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-    renderer.shadowMap.enabled = true
-    renderer.shadowMap.type    = THREE.PCFSoftShadowMap
-    renderer.outputColorSpace  = THREE.SRGBColorSpace
-    renderer.toneMapping       = THREE.ACESFilmicToneMapping
+    renderer.shadowMap.enabled  = true
+    renderer.shadowMap.type     = THREE.PCFSoftShadowMap
+    renderer.outputColorSpace   = THREE.SRGBColorSpace
+    renderer.toneMapping        = THREE.ACESFilmicToneMapping
     renderer.toneMappingExposure = 1.2
     this.renderer = renderer
 
-    // Scene
     const scene = new THREE.Scene()
     scene.background = new THREE.Color(ENVS[0].bg)
     this.scene = scene
 
-    // Environment (PBR reflections)
     const pmrem = new THREE.PMREMGenerator(renderer)
     pmrem.compileEquirectangularShader()
     const envTexture = pmrem.fromScene(new RoomEnvironment(renderer)).texture
-    scene.environment = envTexture
+    scene.environment          = envTexture
     scene.environmentIntensity = 1.6
     this._roomEnvTexture = envTexture
-    // Kitchen HDR loads async — pmrem disposed inside after use
     this._loadKitchenHDR(renderer, pmrem)
 
-    // Camera — positioned after model loads
     const camera = new THREE.PerspectiveCamera(35, 1, 0.001, 50)
     camera.position.set(0, 0.3, 1.5)
     this.camera = camera
 
-    // Controls
     const controls = new OrbitControls(camera, canvas)
-    controls.enableDamping    = true
-    controls.dampingFactor    = 0.06
-    controls.enablePan        = false
-    controls.minDistance      = 0.3
-    controls.maxDistance      = 4
-    controls.maxPolarAngle    = Math.PI * 0.85
-    controls.autoRotateSpeed  = 1.5
+    controls.enableDamping   = true
+    controls.dampingFactor   = 0.06
+    controls.enablePan       = false
+    controls.minDistance     = 0.3
+    controls.maxDistance     = 4
+    controls.maxPolarAngle   = Math.PI * 0.85
+    controls.autoRotateSpeed = 1.5
     this.controls = controls
 
-    // Lights
+    // Lights — soft studio setup
     const ambient = new THREE.AmbientLight(0xfff5ee, ENVS[0].ambInt)
     ambient.name = 'ambient'
     scene.add(ambient)
 
-    // Soft studio key — front-left, gentle like a large softbox
     const key = new THREE.DirectionalLight(0xfffaf5, 1.9)
     key.position.set(-1.5, 4, 3)
     key.castShadow = true
@@ -144,21 +158,17 @@ export class Viewer {
     key.shadow.radius = 6
     scene.add(key)
 
-    // Strong warm fill to match studio wrap-around softness
     const fill = new THREE.DirectionalLight(0xfff5ee, 1.4)
     fill.position.set(3, 2, 1)
     scene.add(fill)
 
-    // Back rim — very subtle
     const rim = new THREE.DirectionalLight(0xfff0e8, 0.3)
     rim.position.set(0, 3, -4)
     scene.add(rim)
 
-    // Hemisphere fills bottom shadows with warm ground bounce
     const hemi = new THREE.HemisphereLight(0xfff8f0, 0xf0e8e0, 0.7)
     scene.add(hemi)
 
-    // Ground shadow catcher
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(4, 4),
       new THREE.ShadowMaterial({ opacity: 0.12, transparent: true })
@@ -167,16 +177,15 @@ export class Viewer {
     ground.receiveShadow = true
     scene.add(ground)
 
-    // Kitchen environment (countertop + wall, hidden until Gourmet env)
     this._kitchenGroup = this._buildKitchen()
     scene.add(this._kitchenGroup)
 
-    // Materials (shared instances — MeshPhysicalMaterial for better PBR)
+    // Material instances — MeshPhysicalMaterial for ceramic sheen
     this.bodyMat = new THREE.MeshPhysicalMaterial({
       color:             BODY_MATS.clay.color,
       roughness:         BODY_MATS.clay.roughness,
       metalness:         BODY_MATS.clay.metalness,
-      specularIntensity: 0.06,  // barely any sheen — unglazed ceramic
+      specularIntensity: 0.06,
       specularColor:     new THREE.Color(0xfff4ee),
     })
     this.baseMat = new THREE.MeshPhysicalMaterial({
@@ -184,13 +193,11 @@ export class Viewer {
       roughness: BASE_MATS.steel.roughness,
       metalness: BASE_MATS.steel.metalness,
     })
-    // tapMat is separate — same color as base but more polished (stainless look)
     this.tapMat = new THREE.MeshPhysicalMaterial({
       color:     BASE_MATS.steel.color,
       roughness: 0.20,
       metalness: 0.90,
     })
-    // Vela: off-white fired ceramic (Stefani candle)
     this.velaMat = new THREE.MeshPhysicalMaterial({
       color:             0xEFEBE3,
       roughness:         0.78,
@@ -199,55 +206,74 @@ export class Viewer {
       specularColor:     new THREE.Color(0xffffff),
     })
 
-    // Resize
     this._onResize()
     window.addEventListener('resize', () => this._onResize())
-
-    // Animate
     this._animate()
   }
 
   // ── Load model ──────────────────────────────────────────────────────────
   async loadModel(url) {
     return new Promise((resolve, reject) => {
+      const dracoLoader = new DRACOLoader()
+      dracoLoader.setDecoderPath(
+        'https://www.gstatic.com/draco/versioned/decoders/1.5.7/'
+      )
+
       const loader = new GLTFLoader()
+      loader.setDRACOLoader(dracoLoader)
+
       loader.load(
         url,
         (gltf) => {
           const model = gltf.scene
           this.model  = model
 
-          // ── Auto-fit: rotate (OBJ uses Z-up), center, scale ──
-          model.rotation.x = -Math.PI / 2  // Z-up → Y-up
+          // Model is Z-up (Keyshot default) → rotate to Y-up
+          model.rotation.x = -Math.PI / 2
 
-          const box    = new THREE.Box3().setFromObject(model)
-          const center = new THREE.Vector3()
-          const size   = new THREE.Vector3()
-          box.getCenter(center)
-          box.getSize(size)
+          // Remove Ground Plane (Keyshot studio floor) before bbox calculation
+          const toRemove = []
+          model.traverse(node => {
+            if (node.isMesh && node.parent?.name !== 'P_Aprovado') toRemove.push(node)
+          })
+          toRemove.forEach(n => n.parent?.remove(n))
 
-          // Scale: fit longest dimension to 1 unit
+          // Collect product meshes
+          const productMeshes = []
+          model.traverse(node => {
+            if (!node.isMesh) return
+            node.castShadow    = true
+            node.receiveShadow = true
+            productMeshes.push(node)
+          })
+
+          // Compute bbox from product meshes only
+          const bbox = new THREE.Box3()
+          productMeshes.forEach(n => bbox.expandByObject(n))
+          const size = new THREE.Vector3()
+          bbox.getSize(size)
+
           const maxDim = Math.max(size.x, size.y, size.z)
           const scale  = 1.0 / maxDim
           model.scale.setScalar(scale)
 
-          // Re-center after scale
-          const box2 = new THREE.Box3().setFromObject(model)
+          // Center model on product bbox
+          const bbox2   = new THREE.Box3()
+          productMeshes.forEach(n => bbox2.expandByObject(n))
           const center2 = new THREE.Vector3()
-          box2.getCenter(center2)
+          bbox2.getCenter(center2)
           model.position.sub(center2)
 
-          // Reposition ground to model bottom (recompute after all transforms)
-          const box3 = new THREE.Box3().setFromObject(model)
-          const groundY = box3.min.y
+          // Ground/counter at model bottom
+          const bbox3  = new THREE.Box3()
+          productMeshes.forEach(n => bbox3.expandByObject(n))
+          const groundY = bbox3.min.y
           const groundMesh = this.scene.children.find(
             c => c.isMesh && c.material instanceof THREE.ShadowMaterial
           )
           if (groundMesh) groundMesh.position.y = groundY - 0.002
 
-          // ── Position kitchen to model bottom ──
           if (this._kitchenGroup) {
-            const scaledH = size.y * scale
             const counter = this._kitchenGroup.getObjectByName('counter')
             if (counter) counter.position.y = groundY - 0.025
             const edge = this._kitchenGroup.getObjectByName('edge')
@@ -257,36 +283,38 @@ export class Viewer {
             }
           }
 
-          // ── Assign materials by mesh number range ──
-          model.traverse((node) => {
-            if (!node.isMesh) return
-            node.castShadow    = true
-            node.receiveShadow = true
+          // Auto-detect roles from bounding box + material roughness
+          const roles = detectRoles(productMeshes)
 
-            const role = meshRole(node.name)
+          productMeshes.forEach(node => {
+            const role = roles.get(node) || 'body_lower'
             if      (role === 'base') node.material = this.baseMat
             else if (role === 'tap')  node.material = this.tapMat
             else if (role === 'vela') node.material = this.velaMat
             else                      node.material = this.bodyMat
 
-            // Store for explode
             if (!this.meshGroups[role]) this.meshGroups[role] = []
             this.meshGroups[role].push(node)
             this.origPositions[node.uuid] = node.position.clone()
           })
 
+          if (this.wireframe) {
+            productMeshes.forEach(n => { n.material.wireframe = true })
+          }
+
           this.scene.add(model)
 
-          // ── Camera: position to frame model ──
-          const scaledHeight = size.y * scale
-          const scaledMaxW   = Math.max(size.x, size.z) * scale
+          // Camera — frame the model
+          const scaledH  = size.y * scale
+          const scaledW  = Math.max(size.x, size.z) * scale
           const halfFovV = THREE.MathUtils.degToRad(35) / 2
           const aspect   = this.camera.aspect || 1
           const halfFovH = Math.atan(Math.tan(halfFovV) * aspect)
-          const distH = (scaledHeight / 2) / Math.tan(halfFovV)
-          const distW = (scaledMaxW  / 2) / Math.tan(halfFovH)
-          const dist  = Math.max(distH, distW) * 1.6
-          this.camera.position.set(0, scaledHeight * 0.05, dist)
+          const distH    = (scaledH / 2) / Math.tan(halfFovV)
+          const distW    = (scaledW / 2) / Math.tan(halfFovH)
+          const dist     = Math.max(distH, distW) * 1.25
+          // Slightly below center looking up — showcases the filter's elegant profile
+          this.camera.position.set(0, -scaledH * 0.08, dist)
           this.controls.target.set(0, 0, 0)
           this.controls.update()
 
@@ -306,8 +334,8 @@ export class Viewer {
     const def = BODY_MATS[key]
     if (!def) return
     this.bodyMat.color.setHex(def.color)
-    this.bodyMat.roughness = def.roughness
-    this.bodyMat.metalness = def.metalness
+    this.bodyMat.roughness  = def.roughness
+    this.bodyMat.metalness  = def.metalness
     this.bodyMat.needsUpdate = true
   }
 
@@ -315,13 +343,12 @@ export class Viewer {
     const def = BASE_MATS[key]
     if (!def) return
     this.baseMat.color.setHex(def.color)
-    this.baseMat.roughness = def.roughness
-    this.baseMat.metalness = def.metalness
+    this.baseMat.roughness  = def.roughness
+    this.baseMat.metalness  = def.metalness
     this.baseMat.needsUpdate = true
-    // Tap: same color as base but always more polished (stainless vs brushed)
     this.tapMat.color.setHex(def.color)
-    this.tapMat.roughness = Math.max(0.16, def.roughness - 0.20)
-    this.tapMat.metalness = def.metalness
+    this.tapMat.roughness   = Math.max(0.16, def.roughness - 0.20)
+    this.tapMat.metalness   = def.metalness
     this.tapMat.needsUpdate = true
   }
 
@@ -337,22 +364,20 @@ export class Viewer {
 
   cycleEnvironment() {
     this.envIdx = (this.envIdx + 1) % ENVS.length
-    const env = ENVS[this.envIdx]
-    const amb = this.scene.getObjectByName('ambient')
+    const env   = ENVS[this.envIdx]
+    const amb   = this.scene.getObjectByName('ambient')
     if (amb) amb.intensity = env.ambInt
 
     if (env.kitchen && this._kitchenHDR) {
       this.scene.background           = this._kitchenHDR.bg
       this.scene.environment          = this._kitchenHDR.env
       this.scene.environmentIntensity = 0.85
-      // Tilt camera down so the model base aligns with the panorama counter
       this.controls.target.set(0, -0.14, 0)
       this.controls.update()
     } else {
       this.scene.background           = new THREE.Color(env.bg)
       this.scene.environment          = this._roomEnvTexture
       this.scene.environmentIntensity = 1.4
-      // Reset camera target to center
       this.controls.target.set(0, 0, 0)
       this.controls.update()
     }
@@ -360,16 +385,22 @@ export class Viewer {
     return env.label
   }
 
-  // ── Load kitchen environment (async, called once at init) ────────────────
+  setWireframe(on) {
+    this.wireframe = on
+    ;[this.bodyMat, this.baseMat, this.tapMat, this.velaMat].forEach(mat => {
+      mat.wireframe  = on
+      mat.needsUpdate = true
+    })
+  }
+
+  // ── Kitchen HDR (async, called once) ────────────────────────────────────
   async _loadKitchenHDR(renderer, pmrem) {
     try {
-      // JPEG panorama as visible background (user's kitchen photo)
       const bgTex = await new THREE.TextureLoader()
         .loadAsync(import.meta.env.BASE_URL + 'assets/kitchen_bg.jpg')
       bgTex.mapping    = THREE.EquirectangularReflectionMapping
       bgTex.colorSpace = THREE.SRGBColorSpace
 
-      // HDR (Poly Haven) for accurate PBR reflections on the model
       const hdr = await new RGBELoader()
         .loadAsync(import.meta.env.BASE_URL + 'assets/kitchen.hdr')
       hdr.mapping = THREE.EquirectangularReflectionMapping
@@ -389,12 +420,11 @@ export class Viewer {
     }
   }
 
-  // ── Kitchen environment geometry ─────────────────────────────────────────
+  // ── Kitchen geometry ─────────────────────────────────────────────────────
   _buildKitchen() {
     const group = new THREE.Group()
     group.visible = false
 
-    // Dark granite/quartz countertop (HDR provides the background wall)
     const topMat = new THREE.MeshStandardMaterial({
       color: 0x1E1C1A, roughness: 0.14, metalness: 0.05,
     })
@@ -403,7 +433,6 @@ export class Viewer {
     counter.name = 'counter'
     group.add(counter)
 
-    // Subtle counter edge highlight (thin strip at front)
     const edgeMat = new THREE.MeshStandardMaterial({
       color: 0x2A2826, roughness: 0.08, metalness: 0.10,
     })
@@ -414,20 +443,11 @@ export class Viewer {
     return group
   }
 
-  setWireframe(on) {
-    this.wireframe = on
-    ;[this.bodyMat, this.baseMat, this.tapMat, this.velaMat].forEach(mat => {
-      mat.wireframe = on
-      mat.needsUpdate = true
-    })
-  }
-
   // ── Resize ───────────────────────────────────────────────────────────────
   _onResize() {
     const el  = this.canvas.parentElement
     const w   = el.clientWidth
     const h   = el.clientHeight
-    const dpr = Math.min(window.devicePixelRatio, 2)
     this.renderer.setSize(w, h, false)
     this.canvas.style.width  = w + 'px'
     this.canvas.style.height = h + 'px'
@@ -442,25 +462,24 @@ export class Viewer {
 
     if (!this.model) return
 
-    // Explode: model has rotation.x = -PI/2, so local Z = world Y (vertical)
-    // and local -Y = world +Z (toward camera)
+    // Model has rotation.x = -PI/2; node positions are in model-local (Z-up) space.
+    // Local Z → world Y (up); local -Y → world +Z (toward camera)
     const ROLE_OFFSETS = {
-      lid:        new THREE.Vector3(0,  0,    +0.26),  // world up
-      body_upper: new THREE.Vector3(0,  0,    +0.12),  // world up (less)
-      body_lower: new THREE.Vector3(0,  0,     0   ),  // stays
-      base:       new THREE.Vector3(0,  0,    -0.16),  // world down
-      tap:        new THREE.Vector3(0, -0.24,  0   ),  // world +Z toward camera
+      lid:        new THREE.Vector3(0,  0,    +0.26),
+      body_upper: new THREE.Vector3(0,  0,    +0.12),
+      body_lower: new THREE.Vector3(0,  0,     0   ),
+      base:       new THREE.Vector3(0,  0,    -0.16),
+      tap:        new THREE.Vector3(0, -0.24,  0   ),
     }
 
-    this.model.traverse(node => {
-      if (!node.isMesh) return
-      const orig = this.origPositions[node.uuid]
-      if (!orig) return
-      const role   = meshRole(node.name)
+    Object.entries(this.meshGroups).forEach(([role, nodes]) => {
       const offset = ROLE_OFFSETS[role]
-      if (offset) {
+      if (!offset) return
+      nodes.forEach(node => {
+        const orig = this.origPositions[node.uuid]
+        if (!orig) return
         node.position.lerpVectors(orig, orig.clone().add(offset), this.explodeT)
-      }
+      })
     })
   }
 

@@ -2,3 +2,7 @@ node_modules/
 dist/
 *.obj
 .DS_Store
+# Source Keyshot file (77MB — compressed version is in public/assets/)
+Breve_Filtro_Agua_Elipses.glb
+# Stray assets not used by app
+assets/*.jpg

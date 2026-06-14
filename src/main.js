@@ -12,7 +12,7 @@ const viewer = new Viewer(canvas)
 initUI(viewer)
 
 // Load model
-viewer.loadModel(import.meta.env.BASE_URL + 'assets/filtro.glb')
+viewer.loadModel(import.meta.env.BASE_URL + 'assets/filtro_keyshot.glb')
   .then(() => {
     loading.classList.add('hidden')
   })
