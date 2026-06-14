@@ -288,8 +288,12 @@ export class Viewer {
           const scale  = 1.0 / maxDim
           model.scale.setScalar(scale)
 
-          // Center at world origin: new_world = scale*orig + position = 0 → position = -scale*center
-          model.position.copy(center).negate().multiplyScalar(scale)
+          // Center X/Y at world origin; keep Z = 0 (no negative Z positioning)
+          model.position.set(
+            -center.x * scale,
+            -center.y * scale,
+            0
+          )
 
           // Propagate transforms so shadow/counter geometry uses correct world coords
           model.updateMatrixWorld(true)
@@ -298,6 +302,7 @@ export class Viewer {
           const scaledH = size.y * scale
           const scaledW = Math.max(size.x, size.z) * scale
           const groundY = -scaledH * 0.5  // model centered at 0, bottom at -scaledH/2
+
 
           const groundMesh = this.scene.children.find(
             c => c.isMesh && c.material instanceof THREE.ShadowMaterial
