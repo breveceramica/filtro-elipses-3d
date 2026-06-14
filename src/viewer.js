@@ -6,13 +6,13 @@ import { RGBELoader } from 'three/addons/loaders/RGBELoader.js'
 
 // ── Material definitions ──────────────────────────────────────────────────
 export const BODY_MATS = {
-  clay:        { color: 0x8B3A1C, roughness: 0.93, metalness: 0.00 },
-  verde_folha: { color: 0x4A6B30, roughness: 0.92, metalness: 0.00 },
-  white:       { color: 0xD4CDC4, roughness: 0.92, metalness: 0.00 },
+  clay:        { color: 0x9B4020, roughness: 0.97, metalness: 0.00 },
+  verde_folha: { color: 0x4A6B30, roughness: 0.96, metalness: 0.00 },
+  white:       { color: 0xD8D2CA, roughness: 0.96, metalness: 0.00 },
 }
 export const BASE_MATS = {
-  steel: { color: 0xB8C2C6, roughness: 0.48, metalness: 0.88 },
-  latao: { color: 0xB89A38, roughness: 0.46, metalness: 0.86 },
+  steel: { color: 0xB4BCBF, roughness: 0.38, metalness: 0.88 },
+  latao: { color: 0xB89A38, roughness: 0.36, metalness: 0.86 },
 }
 
 // ── Mesh number → material role ───────────────────────────────────────────
@@ -105,7 +105,7 @@ export class Viewer {
     pmrem.compileEquirectangularShader()
     const envTexture = pmrem.fromScene(new RoomEnvironment(renderer)).texture
     scene.environment = envTexture
-    scene.environmentIntensity = 1.4
+    scene.environmentIntensity = 1.6
     this._roomEnvTexture = envTexture
     // Kitchen HDR loads async — pmrem disposed inside after use
     this._loadKitchenHDR(renderer, pmrem)
@@ -131,8 +131,9 @@ export class Viewer {
     ambient.name = 'ambient'
     scene.add(ambient)
 
-    const key = new THREE.DirectionalLight(0xfff6ee, 2.6)
-    key.position.set(-2.5, 5, 2.5)
+    // Soft studio key — front-left, gentle like a large softbox
+    const key = new THREE.DirectionalLight(0xfffaf5, 1.9)
+    key.position.set(-1.5, 4, 3)
     key.castShadow = true
     key.shadow.mapSize.set(2048, 2048)
     key.shadow.camera.near = 0.1
@@ -140,18 +141,21 @@ export class Viewer {
     key.shadow.camera.left = key.shadow.camera.bottom = -0.8
     key.shadow.camera.right = key.shadow.camera.top   =  0.8
     key.shadow.bias   = -0.0008
-    key.shadow.radius = 3
+    key.shadow.radius = 6
     scene.add(key)
 
-    const fill = new THREE.DirectionalLight(0xe8f0ff, 0.85)
-    fill.position.set(3, 1.5, 1)
+    // Strong warm fill to match studio wrap-around softness
+    const fill = new THREE.DirectionalLight(0xfff5ee, 1.4)
+    fill.position.set(3, 2, 1)
     scene.add(fill)
 
-    const rim = new THREE.DirectionalLight(0xffeedd, 0.45)
-    rim.position.set(0, 4, -4)
+    // Back rim — very subtle
+    const rim = new THREE.DirectionalLight(0xfff0e8, 0.3)
+    rim.position.set(0, 3, -4)
     scene.add(rim)
 
-    const hemi = new THREE.HemisphereLight(0xfff8f0, 0xe8e0d8, 0.5)
+    // Hemisphere fills bottom shadows with warm ground bounce
+    const hemi = new THREE.HemisphereLight(0xfff8f0, 0xf0e8e0, 0.7)
     scene.add(hemi)
 
     // Ground shadow catcher
@@ -169,19 +173,23 @@ export class Viewer {
 
     // Materials (shared instances — MeshPhysicalMaterial for better PBR)
     this.bodyMat = new THREE.MeshPhysicalMaterial({
-      color:            BODY_MATS.clay.color,
-      roughness:        BODY_MATS.clay.roughness,
-      metalness:        BODY_MATS.clay.metalness,
-      specularIntensity: 0.18,
-      specularColor:    new THREE.Color(0xfff4ee),
+      color:             BODY_MATS.clay.color,
+      roughness:         BODY_MATS.clay.roughness,
+      metalness:         BODY_MATS.clay.metalness,
+      specularIntensity: 0.06,  // barely any sheen — unglazed ceramic
+      specularColor:     new THREE.Color(0xfff4ee),
     })
     this.baseMat = new THREE.MeshPhysicalMaterial({
       color:     BASE_MATS.steel.color,
-      roughness: 0.48,
-      metalness: 0.82,
+      roughness: BASE_MATS.steel.roughness,
+      metalness: BASE_MATS.steel.metalness,
     })
-    // tapMat shares the same instance as baseMat — they change together
-    this.tapMat = this.baseMat
+    // tapMat is separate — same color as base but more polished (stainless look)
+    this.tapMat = new THREE.MeshPhysicalMaterial({
+      color:     BASE_MATS.steel.color,
+      roughness: 0.20,
+      metalness: 0.90,
+    })
     // Vela: off-white fired ceramic (Stefani candle)
     this.velaMat = new THREE.MeshPhysicalMaterial({
       color:             0xEFEBE3,
@@ -310,7 +318,11 @@ export class Viewer {
     this.baseMat.roughness = def.roughness
     this.baseMat.metalness = def.metalness
     this.baseMat.needsUpdate = true
-    // tapMat is the same instance — no separate update needed
+    // Tap: same color as base but always more polished (stainless vs brushed)
+    this.tapMat.color.setHex(def.color)
+    this.tapMat.roughness = Math.max(0.16, def.roughness - 0.20)
+    this.tapMat.metalness = def.metalness
+    this.tapMat.needsUpdate = true
   }
 
   // ── Controls ─────────────────────────────────────────────────────────────
