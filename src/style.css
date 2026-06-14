@@ -339,3 +339,110 @@ main {
 }
 .cb:hover { background: var(--bg); border-color: rgba(155,74,40,.3); }
 .cb.on { background: rgba(155,74,40,.06); border-color: var(--clay); color: var(--clay); font-weight: 500; }
+
+/* ── Mobile portrait ────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+
+  /* Page scrolls on mobile */
+  html, body { height: auto; overflow-x: hidden; overflow-y: auto; }
+  body { min-height: 100dvh; }
+
+  /* Compact header */
+  header { height: 44px; padding: 0 14px; }
+  .h-logo svg, .h-logo img { height: 20px; }
+  .h-center { display: none; }
+  .h-link { font-size: 0.58rem; letter-spacing: 0.06em; }
+
+  /* Stack columns */
+  main {
+    flex-direction: column;
+    flex: none;
+    overflow: visible;
+    height: auto;
+    min-height: 0;
+  }
+
+  /* 1 — Canvas */
+  #viewer {
+    order: 1;
+    width: 100%;
+    height: 50vh;
+    min-height: 240px;
+    max-height: 380px;
+    flex-shrink: 0;
+  }
+
+  /* 2 — Customizer */
+  .right {
+    order: 2;
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid var(--line);
+    padding: 16px 16px 12px;
+    gap: 16px;
+    overflow: visible;
+    height: auto;
+  }
+
+  /* 3 — Product info */
+  .left {
+    order: 3;
+    width: 100%;
+    border-right: none;
+    border-top: 1px solid var(--line);
+    padding: 14px 16px 28px;
+    gap: 12px;
+    overflow: visible;
+    height: auto;
+  }
+
+  /* Product name + CTA inline */
+  .prod-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .prod-name { font-size: 1.05rem; flex-shrink: 0; }
+  .prod-sub { display: none; }
+  .cta {
+    margin-top: 0;
+    padding: 9px 16px;
+    font-size: 0.68rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* No dividers */
+  .divider { display: none; }
+
+  /* Compact specs */
+  .spec-row { padding: 4px 0; font-size: 0.65rem; }
+  .spec-list { padding: 2px 8px; }
+
+  /* Features: icon + title only (no sub-text) */
+  .feat-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .feat-text span { display: none; }
+  .feat-text strong { font-size: 0.56rem; }
+
+  /* View controls 2×2 grid */
+  .ctl-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px;
+  }
+  .cb { padding: 7px 8px; font-size: 0.62rem; gap: 4px; }
+
+  /* Swatches: larger touch targets */
+  .sw { padding: 8px 4px 7px; }
+  .sw-dot { width: 28px; height: 28px; }
+  .bb { padding: 9px 10px; }
+  .bb-dot { width: 15px; height: 15px; }
+
+  /* Safe area for iPhone home indicator */
+  .left { padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px)); }
+}
