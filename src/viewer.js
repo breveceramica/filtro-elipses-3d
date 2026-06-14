@@ -273,27 +273,32 @@ export class Viewer {
           toRemove.forEach(n => n.parent?.remove(n))
 
 
-          // Compute bbox from product meshes only
+          // Compute bbox ONCE from fresh GLTFLoader matrices.
+          // expandByObject uses updateWorldMatrix(false,false) — does NOT propagate new
+          // model.scale/position to children. Re-querying after transforms gives stale results.
           const bbox = new THREE.Box3()
           productMeshes.forEach(n => bbox.expandByObject(n))
+          const center = new THREE.Vector3()
+          bbox.getCenter(center)
           const size = new THREE.Vector3()
           bbox.getSize(size)
 
+          // Scale to fit in a unit cube
           const maxDim = Math.max(size.x, size.y, size.z)
           const scale  = 1.0 / maxDim
           model.scale.setScalar(scale)
 
-          // Center model on product bbox
-          const bbox2   = new THREE.Box3()
-          productMeshes.forEach(n => bbox2.expandByObject(n))
-          const center2 = new THREE.Vector3()
-          bbox2.getCenter(center2)
-          model.position.sub(center2)
+          // Center at world origin: new_world = scale*orig + position = 0 → position = -scale*center
+          model.position.copy(center).negate().multiplyScalar(scale)
 
-          // Ground/counter at model bottom
-          const bbox3  = new THREE.Box3()
-          productMeshes.forEach(n => bbox3.expandByObject(n))
-          const groundY = bbox3.min.y
+          // Propagate transforms so shadow/counter geometry uses correct world coords
+          model.updateMatrixWorld(true)
+
+          // Ground Y derived from math — no stale bbox re-query needed
+          const scaledH = size.y * scale
+          const scaledW = Math.max(size.x, size.z) * scale
+          const groundY = -scaledH * 0.5  // model centered at 0, bottom at -scaledH/2
+
           const groundMesh = this.scene.children.find(
             c => c.isMesh && c.material instanceof THREE.ShadowMaterial
           )
@@ -331,8 +336,6 @@ export class Viewer {
           this.scene.add(model)
 
           // Camera — frame the full model with padding
-          const scaledH  = size.y * scale
-          const scaledW  = Math.max(size.x, size.z) * scale
           const halfFovV = THREE.MathUtils.degToRad(35) / 2
           const aspect   = this.camera.aspect || 1
           const halfFovH = Math.atan(Math.tan(halfFovV) * aspect)
